@@ -131,14 +131,75 @@ func evalStep(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeo
 	return v
 
 }
+func argmax(data map[int]float64) int {
+	var maxKey int
+	var maxValue float64
 
-func evalPolicy(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeon *maze.Maze, gamma float64) {
+	for key, value := range data {
+		maxKey = key
+		maxValue = value
+		break
+	}
+
+	for key, value := range data {
+		if value > maxValue {
+			maxKey = key
+			maxValue = value
+		}
+	}
+
+	return maxKey
+}
+
+func updatePolicy(policy *Policy, v *collections.DefaultDict[[2]int, float64], dungeon *maze.Maze, gamma float64) *Policy {
+	goalX, goalY, err := dungeon.GetGoal()
+	if err != nil {
+		panic(err)
+	}
+	updatedPolicy := make(Policy)
+	for state, statePolicy := range *policy {
+		actionValues := make(map[int]float64)
+		for action := range statePolicy {
+			var nextStateCandidate [2]int
+			nextStateCandidate[0] = state[0]
+			nextStateCandidate[1] = state[1]
+			switch action {
+			case Left:
+				nextStateCandidate[0]--
+			case Right:
+				nextStateCandidate[0]++
+			case Up:
+				nextStateCandidate[1]--
+			case Down:
+				nextStateCandidate[1]++
+			}
+			nextState := getNextState(state, nextStateCandidate, dungeon)
+			reward := getReward(nextState, goalX, goalY)
+			actionValues[action] = reward + gamma*v.Get(nextState)
+		}
+		maxAction := argmax(actionValues)
+
+		updatedStatePolicy := make(map[int]float64)
+		for _, action := range actions {
+			if action == maxAction {
+				updatedStatePolicy[action] = 1.0
+			} else {
+				updatedStatePolicy[action] = 0.0
+			}
+		}
+		updatedPolicy[state] = updatedStatePolicy
+	}
+	return &updatedPolicy
+}
+
+func iterPolicy(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeon *maze.Maze, gamma float64) Policy {
 	for {
 		oldV := collections.NewDefaultDict[[2]int, float64]()
 		for state, value := range v.Data {
 			oldV.Set(state, value)
 		}
 		evalStep(policy, v, dungeon, gamma)
+		updatedPolicy := updatePolicy(&policy, v, dungeon, gamma)
 		var delta float64 = -1
 		for state := range v.Data {
 			if presentDelta := math.Abs(oldV.Get(state) - v.Get(state)); presentDelta > delta {
@@ -146,8 +207,9 @@ func evalPolicy(policy Policy, v *collections.DefaultDict[[2]int, float64], dung
 			}
 		}
 		if delta == 0 {
-			return
+			return policy
 		}
+		policy = *updatedPolicy
 	}
 }
 
@@ -161,6 +223,7 @@ func main() {
 	fmt.Println("=========================================")
 	v := newV()
 	policy := newPolicy(getStates(dungeon), dungeon)
-	evalPolicy(policy, v, dungeon, 0.9)
+	updatedPolicy := iterPolicy(policy, v, dungeon, 0.9)
 	fmt.Println(v)
+	fmt.Println(updatedPolicy)
 }
