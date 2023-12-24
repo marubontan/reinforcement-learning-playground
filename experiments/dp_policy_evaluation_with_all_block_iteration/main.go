@@ -51,9 +51,7 @@ func getStates(m *maze.Maze) State {
 	blockIndices := make(State, 0)
 	for hI, hBlocks := range m.Blocks {
 		for wI := range hBlocks {
-			if m.Blocks[hI][wI].BlockType != maze.Obstacle {
-				blockIndices = append(blockIndices, [2]int{wI, hI})
-			}
+			blockIndices = append(blockIndices, [2]int{wI, hI})
 		}
 	}
 	return blockIndices
@@ -84,18 +82,21 @@ func newPolicy(states [][2]int, m *maze.Maze) Policy {
 	var policy Policy = make(map[[2]int]map[int]float64)
 	for _, state := range states {
 		statePolicy := make(map[int]float64)
-		availableActions := make([]int, 0)
 		for _, action := range actions {
-			if nextBlockAvailable(state[0], state[1], action, m) {
-				availableActions = append(availableActions, action)
-			}
-		}
-		for _, action := range availableActions {
-			statePolicy[action] = 1.0 / float64(len(availableActions))
+			statePolicy[action] = 0.25
 		}
 		policy[state] = statePolicy
 	}
 	return policy
+
+}
+
+func getNextState(prevState [2]int, newStateCandidate [2]int, m *maze.Maze) [2]int {
+	if m.IsAvailable(newStateCandidate[0], newStateCandidate[1]) {
+		return newStateCandidate
+
+	}
+	return prevState
 
 }
 
@@ -124,19 +125,20 @@ func evalStep(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeo
 		statePolicy := policy[state]
 		var newV float64
 		for action, prob := range statePolicy {
-			var nextState [2]int
-			nextState[0] = state[0]
-			nextState[1] = state[1]
+			var nextStateCandidate [2]int
+			nextStateCandidate[0] = state[0]
+			nextStateCandidate[1] = state[1]
 			switch action {
 			case Left:
-				nextState[0]--
+				nextStateCandidate[0]--
 			case Right:
-				nextState[0]++
+				nextStateCandidate[0]++
 			case Up:
-				nextState[1]--
+				nextStateCandidate[1]--
 			case Down:
-				nextState[1]++
+				nextStateCandidate[1]++
 			}
+			nextState := getNextState(state, nextStateCandidate, dungeon)
 			reward := getReward(nextState, goalX, goalY)
 			newV += prob * (reward + gamma*v.Get(nextState))
 		}
@@ -146,6 +148,7 @@ func evalStep(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeo
 	return v
 
 }
+
 func evalPolicy(policy Policy, v *collections.DefaultDict[[2]int, float64], dungeon *maze.Maze, gamma float64) {
 	for {
 		oldV := collections.NewDefaultDict[[2]int, float64]()
