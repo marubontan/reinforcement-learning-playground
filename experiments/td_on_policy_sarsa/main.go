@@ -54,28 +54,41 @@ func getStates(m *maze.Maze) State {
 
 type Policy map[[2]int]map[int]float64
 
+type HistoryElement struct {
+	state  [2]int
+	action int
+	reward float64
+	isGoal bool
+}
+
 var actions = []int{Left, Right, Up, Down}
 
 type Agent struct {
-	gamma  float64
-	policy Policy
-	alpha  float64
-	v      map[[2]int]float64
+	gamma   float64
+	policy  Policy
+	alpha   float64
+	epsilon float64
+	q       map[[2]int]map[int]float64
+	memory  [2]*HistoryElement
 }
 
-func newAgent(gamma float64, alpha float64, policy Policy, states [][2]int) *Agent {
-	cnt := make(map[[2]int]int)
-	v := make(map[[2]int]float64)
+func newAgent(gamma float64, alpha float64, epsilon float64, policy Policy, states [][2]int, actions []int) *Agent {
+	q := make(map[[2]int]map[int]float64)
 	for _, state := range states {
-		cnt[state] = 0
-		v[state] = 0.0
+		q[state] = make(map[int]float64)
+		for _, action := range actions {
+			q[state][action] = 0.0
+		}
 	}
+	memory := [2]*HistoryElement{nil, nil}
 
 	return &Agent{
-		gamma:  gamma,
-		policy: policy,
-		alpha:  alpha,
-		v:      v,
+		gamma:   gamma,
+		policy:  policy,
+		epsilon: epsilon,
+		alpha:   alpha,
+		q:       q,
+		memory:  memory,
 	}
 }
 
@@ -100,19 +113,34 @@ func (a *Agent) step(state [2]int, action int, m *maze.Maze) ([2]int, float64, b
 	reward := getReward(nextState, goalX, goalY)
 	isGoal := nextState[0] == goalX && nextState[1] == goalY
 	return nextState, reward, isGoal
-
 }
 
-func (a *Agent) eval(state [2]int, reward float64, nextState [2]int, isGoal bool) {
-	var nextV float64
-	if isGoal {
-		nextV = 0.0
-	} else {
-		nextV = a.v[nextState]
-	}
-	target := reward + a.gamma*nextV
-	a.v[state] += (target - a.v[state]) * a.alpha
+func (a *Agent) reset() {
+	a.memory[0] = nil
+	a.memory[1] = nil
+}
 
+func (a *Agent) update(state [2]int, action int, reward float64, isGoal bool) {
+	a.memory[1] = a.memory[0]
+	a.memory[0] = &HistoryElement{
+		state:  state,
+		action: action,
+		reward: reward,
+		isGoal: isGoal,
+	}
+	if a.memory[1] == nil {
+		return
+	}
+	var nextQ float64
+	if isGoal {
+		nextQ = 0.0
+	} else {
+		nextQ = a.q[a.memory[1].state][a.memory[1].action]
+	}
+	target := reward + a.gamma*nextQ
+	a.q[state][action] += (target - a.q[state][action]) * a.alpha
+
+	a.policy[state] = a.greedyProbs(state)
 }
 
 func newPolicy(m *maze.Maze) Policy {
@@ -127,6 +155,39 @@ func newPolicy(m *maze.Maze) Policy {
 	}
 	return policy
 
+}
+func argmax(data map[int]float64) int {
+	var maxKey int
+	var maxValue float64
+
+	for key, value := range data {
+		maxKey = key
+		maxValue = value
+		break
+	}
+
+	for key, value := range data {
+		if value > maxValue {
+			maxKey = key
+			maxValue = value
+		}
+	}
+
+	return maxKey
+}
+func (a *Agent) greedyProbs(state [2]int) map[int]float64 {
+	stateQ := a.q[state]
+	maxAction := argmax(stateQ)
+	baseProb := a.epsilon / float64(len(actions))
+	actionProbs := make(map[int]float64)
+	for _, action := range actions {
+		if action == maxAction {
+			actionProbs[action] = 1.0 - a.epsilon + baseProb
+		} else {
+			actionProbs[action] = baseProb
+		}
+	}
+	return actionProbs
 }
 
 func getNextState(state [2]int, action int, m *maze.Maze) [2]int {
@@ -165,13 +226,14 @@ func iterEpisodes(episodes int, agent *Agent, dungeon *maze.Maze) {
 	states := getStates(dungeon)
 	for i := 0; i < episodes; i++ {
 		state := states[0]
+		agent.reset()
 		for {
 			action, err := agent.getAction(state)
 			if err != nil {
 				panic(err)
 			}
 			nextState, reward, isGoal := agent.step(state, action, dungeon)
-			agent.eval(state, reward, nextState, isGoal)
+			agent.update(state, action, reward, isGoal)
 			if isGoal {
 				break
 			}
@@ -191,7 +253,7 @@ func main() {
 	fmt.Println("=========================================")
 	policy := newPolicy(dungeon)
 	states := getStates(dungeon)
-	agent := newAgent(0.9, 0.9, policy, states)
-	iterEpisodes(1000, agent, dungeon)
-	fmt.Println(agent.v)
+	agent := newAgent(0.9, 0.5, 0.1, policy, states, actions)
+	iterEpisodes(10000, agent, dungeon)
+	fmt.Println(agent.q)
 }
